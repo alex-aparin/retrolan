@@ -14,6 +14,8 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+// FileContent represents the content of a scanned file
+
 // nolint:cyclop
 func main() {
 	// Everything below is the Pion WebRTC API! Thanks for using it ❤️.
@@ -91,46 +93,50 @@ func main() {
 			fmt.Printf("Message from DataChannel '%s': '%s'\n", dataChannel.Label(), string(msg.Data))
 		})
 	})
-	_, err = peerConnection.CreateDataChannel("data", nil)
-	if err != nil {
-		panic(err)
-	}
 
-	offer, err := peerConnection.CreateOffer(nil)
-	if err != nil {
-		panic(err)
-	}
-	// Sets the LocalDescription, and starts our UDP listeners
-	err = peerConnection.SetLocalDescription(offer)
-	if err != nil {
-		panic(err)
-	}
-
+	// Wait for the offer to be pasted
+	offer := webrtc.SessionDescription{}
 	dir, err := os.Getwd()
+	var offerFiles []utils.FileContent
+	for offerFiles == nil || len(offerFiles) == 0 {
+		time.Sleep(time.Second * 2)
+		dir, err := os.Getwd()
+		if err != nil {
+			continue
+		}
+		offerFiles, err = utils.ScanFilesWithPattern(dir, "offer*")
+	}
+	decode(string(offerFiles[0].Content), &offer)
+
+	// Set the remote SessionDescription
+	err = peerConnection.SetRemoteDescription(offer)
 	if err != nil {
 		panic(err)
 	}
-	err = utils.SaveStringToFile(encode(&offer), filepath.Join(dir, "offer1"))
+
+	// Create an answer
+	answer, err := peerConnection.CreateAnswer(nil)
 	if err != nil {
-		slog.Warn(fmt.Sprintf("FAILED to create offer1 %v", err))
+		panic(err)
 	}
 
-	answer := webrtc.SessionDescription{}
-	var answerFiles []utils.FileContent
-	for answerFiles == nil || len(answerFiles) == 0 {
-		time.Sleep(time.Second * 2)
-		answerFiles, err = utils.ScanFilesWithPattern(dir, "answer*")
+	err = utils.SaveStringToFile(encode(&answer), filepath.Join(dir, "answer1"))
+	if err != nil {
+		slog.Warn(fmt.Sprintf("FAILED to create answer1 %v", err))
 	}
-	decode(string(answerFiles[0].Content), &answer)
 
 	// Create channel that is blocked until ICE Gathering is complete
 	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
 
-	err = peerConnection.SetRemoteDescription(answer)
+	// Sets the LocalDescription, and starts our UDP listeners
+	err = peerConnection.SetLocalDescription(answer)
 	if err != nil {
 		panic(err)
 	}
 
+	// Block until ICE Gathering is complete, disabling trickle ICE
+	// we do this because we only can exchange one signaling message
+	// in a production application you should exchange ICE Candidates via OnICECandidate
 	<-gatherComplete
 
 	// Output the answer in base64 so we can paste it in browser

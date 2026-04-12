@@ -9,8 +9,9 @@
             "type": "go",
             "request": "launch",
             "mode": "debug",
-            "program": "${workspaceFolder}/cmd/client",
+            "program": "${workspaceFolder}/cmd/server",
             "output": "${workspaceFolder}/bin/server",
+            "cwd": "${workspaceFolder}/bin",
             "env": {
                 "TYPE" : "SERVER",
             }
@@ -22,6 +23,7 @@
             "mode": "debug",
             "program": "${workspaceFolder}/cmd/client",
             "output": "${workspaceFolder}/bin/client",
+            "cwd": "${workspaceFolder}/bin",
             "env": {
                 "TYPE" : "CLIENT",
             },
