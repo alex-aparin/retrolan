@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"retrolan/internal/utils"
@@ -18,6 +19,24 @@ import (
 
 // nolint:cyclop
 func main() {
+	address := &net.UDPAddr{
+		IP: net.IP{127, 0, 0, 3},
+	}
+
+	// 2. Create the UDP listener.
+	udpListener, err := net.ListenUDP("udp", address)
+	if err != nil {
+		panic(err)
+	}
+
+	// 3. Configure the SettingEngine with the UDP Mux.
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetICEUDPMux(webrtc.NewICEUDPMux(nil, udpListener))
+	// Pion skips loopback interfaces when gathering host candidates by default.
+	// Required when the UDP mux is bound to a 127.0.0.0/8 address; harmless
+	// otherwise, since non-loopback interfaces are still gathered.
+	settingEngine.SetIncludeLoopbackCandidate(true)
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
 	// Everything below is the Pion WebRTC API! Thanks for using it ❤️.
 
 	// Prepare the configuration
@@ -30,7 +49,7 @@ func main() {
 	}
 
 	// Create a new RTCPeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(config)
+	peerConnection, err := api.NewPeerConnection(config)
 	if err != nil {
 		panic(err)
 	}
@@ -94,16 +113,16 @@ func main() {
 		})
 	})
 
-	// Wait for the offer to be pasted
-	offer := webrtc.SessionDescription{}
 	dir, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+
+	// Wait for the offer to appear on disk
+	offer := webrtc.SessionDescription{}
 	var offerFiles []utils.FileContent
 	for offerFiles == nil || len(offerFiles) == 0 {
 		time.Sleep(time.Second * 2)
-		dir, err := os.Getwd()
-		if err != nil {
-			continue
-		}
 		offerFiles, err = utils.ScanFilesWithPattern(dir, "offer*")
 	}
 	decode(string(offerFiles[0].Content), &offer)
@@ -120,12 +139,10 @@ func main() {
 		panic(err)
 	}
 
-	err = utils.SaveStringToFile(encode(&answer), filepath.Join(dir, "answer1"))
-	if err != nil {
-		slog.Warn(fmt.Sprintf("FAILED to create answer1 %v", err))
-	}
-
-	// Create channel that is blocked until ICE Gathering is complete
+	// Subscribe to ICE gathering completion BEFORE SetLocalDescription starts it.
+	// We block until gathering is complete, disabling trickle ICE: the file-based
+	// handoff can only carry one signaling message, so the answer must already
+	// contain every candidate by the time it is written.
 	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
 
 	// Sets the LocalDescription, and starts our UDP listeners
@@ -134,13 +151,12 @@ func main() {
 		panic(err)
 	}
 
-	// Block until ICE Gathering is complete, disabling trickle ICE
-	// we do this because we only can exchange one signaling message
-	// in a production application you should exchange ICE Candidates via OnICECandidate
 	<-gatherComplete
 
-	// Output the answer in base64 so we can paste it in browser
-	fmt.Println(encode(peerConnection.LocalDescription()))
+	err = utils.SaveStringToFile(encode(peerConnection.LocalDescription()), filepath.Join(dir, "answer1"))
+	if err != nil {
+		slog.Warn(fmt.Sprintf("FAILED to create answer1 %v", err))
+	}
 
 	// Block forever
 	select {}

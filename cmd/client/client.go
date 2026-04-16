@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"retrolan/internal/utils"
@@ -17,6 +18,24 @@ import (
 // nolint:cyclop
 func main() {
 	// Everything below is the Pion WebRTC API! Thanks for using it ❤️.
+	address := &net.UDPAddr{
+		IP: net.IP{127, 0, 0, 2},
+	}
+
+	// 2. Create the UDP listener.
+	udpListener, err := net.ListenUDP("udp", address)
+	if err != nil {
+		panic(err)
+	}
+
+	// 3. Configure the SettingEngine with the UDP Mux.
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetICEUDPMux(webrtc.NewICEUDPMux(nil, udpListener))
+	// Pion skips loopback interfaces when gathering host candidates by default.
+	// Required when the UDP mux is bound to a 127.0.0.0/8 address; harmless
+	// otherwise, since non-loopback interfaces are still gathered.
+	settingEngine.SetIncludeLoopbackCandidate(true)
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine))
 
 	// Prepare the configuration
 	config := webrtc.Configuration{
@@ -28,7 +47,7 @@ func main() {
 	}
 
 	// Create a new RTCPeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(config)
+	peerConnection, err := api.NewPeerConnection(config)
 	if err != nil {
 		panic(err)
 	}
@@ -100,17 +119,25 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// Subscribe to ICE gathering completion BEFORE SetLocalDescription starts it,
+	// so we can serialize the full SDP (with candidates) — there is no trickle
+	// channel between the two processes.
+	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
+
 	// Sets the LocalDescription, and starts our UDP listeners
 	err = peerConnection.SetLocalDescription(offer)
 	if err != nil {
 		panic(err)
 	}
 
+	<-gatherComplete
+
 	dir, err := os.Getwd()
 	if err != nil {
 		panic(err)
 	}
-	err = utils.SaveStringToFile(encode(&offer), filepath.Join(dir, "offer1"))
+	err = utils.SaveStringToFile(encode(peerConnection.LocalDescription()), filepath.Join(dir, "offer1"))
 	if err != nil {
 		slog.Warn(fmt.Sprintf("FAILED to create offer1 %v", err))
 	}
@@ -123,18 +150,10 @@ func main() {
 	}
 	decode(string(answerFiles[0].Content), &answer)
 
-	// Create channel that is blocked until ICE Gathering is complete
-	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
-
 	err = peerConnection.SetRemoteDescription(answer)
 	if err != nil {
 		panic(err)
 	}
-
-	<-gatherComplete
-
-	// Output the answer in base64 so we can paste it in browser
-	fmt.Println(encode(peerConnection.LocalDescription()))
 
 	// Block forever
 	select {}
