@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -52,41 +51,38 @@ func runPeerConnection(inputMessages chan []byte, outputMessages chan []byte) {
 	}
 	defer func() {
 		if cErr := peerConnection.Close(); cErr != nil {
-			fmt.Printf("cannot close peerConnection: %v\n", cErr)
+			slog.Error("close peer connection failed", "err", cErr)
 		}
 	}()
 
 	// Set the handler for Peer connection state
 	// This will notify you when the peer has connected/disconnected
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		fmt.Printf("Peer Connection State has changed: %s\n", state.String())
+		slog.Info("peer connection state changed", "state", state.String())
 
 		if state == webrtc.PeerConnectionStateFailed {
 			// Wait until PeerConnection has had no network activity for 30 seconds or another failure.
 			// It may be reconnected using an ICE Restart.
 			// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
 			// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-			fmt.Println("Peer Connection has gone to failed exiting")
+			slog.Error("peer connection failed, exiting")
 			os.Exit(0)
 		}
 
 		if state == webrtc.PeerConnectionStateClosed {
 			// PeerConnection was explicitly closed. This usually happens from a DTLS CloseNotify
-			fmt.Println("Peer Connection has gone to closed exiting")
+			slog.Info("peer connection closed, exiting")
 			os.Exit(0)
 		}
 	})
 
 	// Register data channel creation handling
 	peerConnection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
-		fmt.Printf("New DataChannel %s %d\n", dataChannel.Label(), dataChannel.ID())
+		slog.Info("new data channel", "label", dataChannel.Label(), "id", dataChannel.ID())
 
 		// Register channel opening handling
 		dataChannel.OnOpen(func() {
-			fmt.Printf(
-				"Data channel '%s'-'%d' open. Random messages will now be sent to any connected DataChannels every 5 seconds\n",
-				dataChannel.Label(), dataChannel.ID(),
-			)
+			slog.Info("data channel open", "label", dataChannel.Label(), "id", dataChannel.ID())
 			for buf := range outputMessages {
 				if sendErr := dataChannel.Send(buf); sendErr != nil {
 					panic(sendErr)
@@ -128,7 +124,7 @@ func runPeerConnection(inputMessages chan []byte, outputMessages chan []byte) {
 	}
 	err = utils.SaveStringToFile(encode(peerConnection.LocalDescription()), filepath.Join(dir, "offer1"))
 	if err != nil {
-		slog.Warn(fmt.Sprintf("FAILED to create offer1 %v", err))
+		slog.Warn("failed to write offer file", "path", "offer1", "err", err)
 	}
 
 	answer := webrtc.SessionDescription{}

@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -49,7 +50,7 @@ func ScanFilesWithPattern(rootDir string, pattern string) ([]FileContent, error)
 	for i, v := range results {
 		if err := os.Remove(v.Path); err != nil {
 			failedFilesCount++
-			// TODO: (alex) add logging
+			slog.Warn("failed to remove scanned file", "path", v.Path, "err", err)
 		} else {
 			results[i-failedFilesCount] = v
 		}

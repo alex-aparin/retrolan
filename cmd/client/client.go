@@ -1,48 +1,58 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 	"net"
 	"os"
+	"sync/atomic"
 )
 
 // nolint:cyclop
 func main() {
-	c := make(chan []byte, 100)
-	d := make(chan []byte, 100)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
-	go runPeerConnection(c, d)
+	inbound := make(chan []byte, 100)
+	outbound := make(chan []byte, 100)
 
-	// Resolve the string address to a UDP address
+	go runPeerConnection(inbound, outbound)
+
 	udpAddr, err := net.ResolveUDPAddr("udp", ":27015")
-
 	if err != nil {
-		fmt.Println(err)
+		slog.Error("resolve UDP addr", "err", err)
 		os.Exit(1)
 	}
 
-	// Start listening for UDP packages on the given address
 	conn, err := net.ListenUDP("udp", udpAddr)
-
 	if err != nil {
-		fmt.Println(err)
+		slog.Error("listen UDP", "err", err)
 		os.Exit(1)
 	}
+	slog.Info("UDP listener bound", "addr", conn.LocalAddr().String())
+
+	// The remote peer has no way to learn the game's UDP address, so the client
+	// remembers the source of the most recent inbound datagram and replies there.
+	var lastAddr atomic.Pointer[net.UDPAddr]
 
 	go func() {
-		for range d {
-			fmt.Println("Received message")
+		for msg := range inbound {
+			dst := lastAddr.Load()
+			if dst == nil {
+				continue
+			}
+			if _, err := conn.WriteToUDP(msg, dst); err != nil {
+				slog.Warn("UDP write failed", "dst", dst.String(), "err", err)
+			}
 		}
 	}()
 
-	// Read from UDP listener in endless loop
 	for {
-		var buf [512]byte
-		_, _, err := conn.ReadFromUDP(buf[0:])
+		buf := make([]byte, 2048)
+		n, addr, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			fmt.Println(err)
+			slog.Error("UDP read failed", "err", err)
 			return
 		}
-		c <- buf[:]
+		lastAddr.Store(addr)
+		outbound <- buf[:n]
 	}
 }
