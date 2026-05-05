@@ -16,9 +16,8 @@ import (
 
 // nolint:cyclop
 func runPeerConnection(ctx context.Context, cancel context.CancelFunc, inputMessages, outputMessages chan []byte) {
-	// Everything below is the Pion WebRTC API! Thanks for using it ❤️.
 	address := &net.UDPAddr{
-		IP: net.IP{127, 0, 0, 2},
+		IP: net.IP{127, 0, 0, 3},
 	}
 
 	udpListener, err := net.ListenUDP("udp", address)
@@ -91,22 +90,40 @@ func runPeerConnection(ctx context.Context, cancel context.CancelFunc, inputMess
 		})
 	})
 
-	_, err = peerConnection.CreateDataChannel("data", nil)
+	dir, err := os.Getwd()
 	if err != nil {
 		panic(err)
 	}
 
-	offer, err := peerConnection.CreateOffer(nil)
+	offer := webrtc.SessionDescription{}
+	var offerFiles []utils.FileContent
+	for len(offerFiles) == 0 {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second * 2):
+		}
+		offerFiles, err = utils.ScanFilesWithPattern(dir, "offer*")
+	}
+	decode(string(offerFiles[0].Content), &offer)
+
+	err = peerConnection.SetRemoteDescription(offer)
 	if err != nil {
 		panic(err)
 	}
 
-	// Subscribe to ICE gathering completion BEFORE SetLocalDescription starts it,
-	// so we can serialize the full SDP (with candidates) — there is no trickle
-	// channel between the two processes.
+	answer, err := peerConnection.CreateAnswer(nil)
+	if err != nil {
+		panic(err)
+	}
+
+	// Subscribe to ICE gathering completion BEFORE SetLocalDescription starts it.
+	// We block until gathering is complete, disabling trickle ICE: the file-based
+	// handoff can only carry one signaling message, so the answer must already
+	// contain every candidate by the time it is written.
 	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
 
-	err = peerConnection.SetLocalDescription(offer)
+	err = peerConnection.SetLocalDescription(answer)
 	if err != nil {
 		panic(err)
 	}
@@ -117,30 +134,9 @@ func runPeerConnection(ctx context.Context, cancel context.CancelFunc, inputMess
 		return
 	}
 
-	dir, err := os.Getwd()
+	err = utils.SaveStringToFile(encode(peerConnection.LocalDescription()), filepath.Join(dir, "answer1"))
 	if err != nil {
-		panic(err)
-	}
-	err = utils.SaveStringToFile(encode(peerConnection.LocalDescription()), filepath.Join(dir, "offer1"))
-	if err != nil {
-		slog.Warn("failed to write offer file", "path", "offer1", "err", err)
-	}
-
-	answer := webrtc.SessionDescription{}
-	var answerFiles []utils.FileContent
-	for len(answerFiles) == 0 {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(time.Second * 2):
-		}
-		answerFiles, err = utils.ScanFilesWithPattern(dir, "answer*")
-	}
-	decode(string(answerFiles[0].Content), &answer)
-
-	err = peerConnection.SetRemoteDescription(answer)
-	if err != nil {
-		panic(err)
+		slog.Warn("failed to write answer file", "path", "answer1", "err", err)
 	}
 
 	<-ctx.Done()
