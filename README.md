@@ -20,7 +20,7 @@ flowchart LR
 
     STUN(["stun.l.google.com:19302"])
 
-    Game <-->|"UDP :27015"| Client
+    Game <-->|"UDP GAME_SERVER_ADDR<br/>default :27015"| Client
     Client <==>|"WebRTC data channel"| Server
     Server <-->|"UDP GAME_SERVER_ADDR<br/>default 127.0.0.1:27015"| GameSrv
 
@@ -40,8 +40,9 @@ There is no signaling server. The SDP offer/answer exchange happens through two 
 ## Build
 
 ```bash
-go build -o bin/client ./cmd/client
-go build -o bin/server ./cmd/server
+go build -o bin/client   ./cmd/client
+go build -o bin/server   ./cmd/server
+go build -o bin/mockgame ./cmd/mockgame   # optional helper, see below
 ```
 
 Or run without building:
@@ -49,6 +50,7 @@ Or run without building:
 ```bash
 go run ./cmd/server
 go run ./cmd/client
+go run ./cmd/mockgame
 ```
 
 Tests:
@@ -75,16 +77,85 @@ Override the address of the upstream game server (default `127.0.0.1:27015`):
 GAME_SERVER_ADDR=192.168.1.10:27015 ./bin/server
 ```
 
+Or change the client's local listen address (default `:27015`, all interfaces):
+
+```bash
+GAME_SERVER_ADDR=127.0.0.1:27016 ./bin/client
+```
+
+## Sending raw UDP datagrams to the client
+
+Without a real game you can drive the relay end-to-end with `netcat`. With both `./bin/client` and `./bin/server` running, in a third terminal stand up a fake game server next to `./bin/server`:
+
+```bash
+nc -u -l 127.0.0.1 27015
+```
+
+In a fourth terminal, send a datagram into the client's game port:
+
+```bash
+echo "hello from the LAN" | nc -u -w1 127.0.0.1 27015
+```
+
+The bytes flow `nc → client (UDP :27015) → WebRTC data channel → server → nc -l (UDP 127.0.0.1:27015)` and appear in the listener. Anything you type into the listener `nc` travels back the same path; the relay client replies to the most recent UDP source it saw, so use an interactive session if you want bidirectional traffic:
+
+```bash
+nc -u 127.0.0.1 27015
+```
+
+A one-shot send with Bash's built-in UDP redirection works too — handy when `nc` isn't installed:
+
+```bash
+echo -n "ping" > /dev/udp/127.0.0.1/27015
+```
+
+## Mock game server
+
+`cmd/mockgame` is a small helper for driving either end of the relay without a real game. It exposes:
+
+- a UDP **listener** on `MOCK_LISTEN_ADDR` (default `:27015`) that **echoes** every datagram back to its source — drop it next to the relay server (as a fake upstream game server) or next to the relay client (as a fake game replying to probes);
+- a UDP **sender** on an ephemeral local port that writes to `MOCK_TARGET_ADDR` (default `127.0.0.1:27016`) — used to inject arbitrary payloads into either end of the pipe;
+- a tiny **web UI** at `MOCK_HTTP_ADDR` (default `:8080`) that streams sent/received messages on both sockets in real time over Server-Sent Events (no manual refresh) and exposes a text box for sending.
+
+Run it on its own to confirm the binary works:
+
+```bash
+./bin/mockgame
+# open http://localhost:8080
+echo -n "ping" > /dev/udp/127.0.0.1/27015   # appears in the listener panel as rx + tx (echoed)
+```
+
+Typical loopback wiring for an end-to-end test on a single host (note the relay client and a default mockgame both want `:27015`, so move one of them):
+
+```bash
+# pretend to be the upstream game server, on :27016
+MOCK_LISTEN_ADDR=:27016 MOCK_HTTP_ADDR=:8081 ./bin/mockgame
+
+# relay server, dialing the mockgame above for each WebRTC peer
+GAME_SERVER_ADDR=127.0.0.1:27016 ./bin/server
+
+# relay client, listening for "game" traffic on :27015 (default)
+./bin/client
+
+# pretend to be the game; sender targets the relay client's listen port
+MOCK_TARGET_ADDR=127.0.0.1:27015 MOCK_HTTP_ADDR=:8080 ./bin/mockgame
+```
+
+Now the `:8080` UI lets you push payloads into the relay client; the `:8081` UI shows them arriving at the upstream side and being echoed back through the data channel.
+
 ## Configuration
 
-| Variable            | Default            | Side   | Purpose                                       |
-| ------------------- | ------------------ | ------ | --------------------------------------------- |
-| `GAME_SERVER_ADDR`  | `127.0.0.1:27015`  | server | UDP address of the upstream game server.      |
+| Variable            | Default            | Side     | Purpose                                                                  |
+| ------------------- | ------------------ | -------- | ------------------------------------------------------------------------ |
+| `GAME_SERVER_ADDR`  | `:27015`           | client   | UDP listen address for the local game (all interfaces by default).       |
+| `GAME_SERVER_ADDR`  | `127.0.0.1:27015`  | server   | UDP address of the upstream game server to dial for each relayed peer.   |
+| `MOCK_HTTP_ADDR`    | `:8080`            | mockgame | HTTP listen address for the web UI.                                      |
+| `MOCK_LISTEN_ADDR`  | `:27015`           | mockgame | UDP listen address; every datagram is echoed back to its source.         |
+| `MOCK_TARGET_ADDR`  | `127.0.0.1:27016`  | mockgame | Target for outbound datagrams sent from the web UI.                      |
 
 The following addresses are currently hardcoded and conflict if more than one relay instance runs on the same host:
 
 - Client WebRTC ICE mux: `127.0.0.2`
-- Client UDP listener: `:27015` (all interfaces; matches the GoldSrc/Source default — games on other ports need a code change for now)
 - Server WebRTC ICE mux: `127.0.0.3`
 
 ## Status & limitations

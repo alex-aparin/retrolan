@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"retrolan/internal/utils"
 	"sync/atomic"
 	"syscall"
 )
@@ -23,9 +24,10 @@ func main() {
 
 	go runPeerConnection(ctx, cancel, inbound, outbound)
 
-	udpAddr, err := net.ResolveUDPAddr("udp", ":27015")
+	gameAddr := utils.GetEnv("GAME_SERVER_ADDR", ":27015")
+	udpAddr, err := net.ResolveUDPAddr("udp", gameAddr)
 	if err != nil {
-		slog.Error("resolve UDP addr", "err", err)
+		slog.Error("resolve UDP addr", "addr", gameAddr, "err", err)
 		os.Exit(1)
 	}
 

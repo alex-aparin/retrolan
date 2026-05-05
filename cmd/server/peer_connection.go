@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -15,7 +16,7 @@ import (
 )
 
 // nolint:cyclop
-func runPeerConnection(ctx context.Context, cancel context.CancelFunc, inputMessages, outputMessages chan []byte) {
+func runPeerConnection(ctx context.Context, cancel context.CancelFunc) {
 	address := &net.UDPAddr{
 		IP: net.IP{127, 0, 0, 3},
 	}
@@ -67,25 +68,59 @@ func runPeerConnection(ctx context.Context, cancel context.CancelFunc, inputMess
 	peerConnection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
 		slog.Info("new data channel", "label", dataChannel.Label(), "id", dataChannel.ID())
 
+		// Dial a fresh UDP socket to the game server for this data channel so
+		// the game server sees a unique source port per relayed peer; lifetime
+		// is bound to the data channel via dcCtx below.
+		gameAddr := utils.GetEnv("GAME_SERVER_ADDR", "127.0.0.1:27015")
+		gameConn, err := net.Dial("udp", gameAddr)
+		if err != nil {
+			slog.Error("dial game server failed", "addr", gameAddr, "err", err)
+			return
+		}
+		slog.Info("game server conn dialed",
+			"label", dataChannel.Label(), "id", dataChannel.ID(),
+			"local", gameConn.LocalAddr().String(), "remote", gameConn.RemoteAddr().String())
+
+		dcCtx, dcCancel := context.WithCancel(ctx)
+
+		// Closes gameConn when the parent context cancels or the data channel
+		// closes, unblocking the read loop in OnOpen.
+		go func() {
+			<-dcCtx.Done()
+			_ = gameConn.Close()
+		}()
+
+		dataChannel.OnClose(func() {
+			slog.Info("data channel closed", "label", dataChannel.Label(), "id", dataChannel.ID())
+			dcCancel()
+		})
+
 		dataChannel.OnOpen(func() {
-			slog.Info("data channel open", "label", dataChannel.Label(), "id", dataChannel.ID())
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case buf := <-outputMessages:
-					if sendErr := dataChannel.Send(buf); sendErr != nil {
+			slog.Info("data channel open, relaying to game server",
+				"label", dataChannel.Label(), "id", dataChannel.ID(), "game_addr", gameAddr)
+
+			go func() {
+				buf := make([]byte, 2048)
+				for {
+					n, err := gameConn.Read(buf)
+					if err != nil {
+						if dcCtx.Err() != nil || errors.Is(err, net.ErrClosed) {
+							return
+						}
+						slog.Error("game server read failed", "err", err)
+						return
+					}
+					if sendErr := dataChannel.Send(buf[:n]); sendErr != nil {
 						slog.Error("data channel send failed", "err", sendErr)
 						return
 					}
 				}
-			}
+			}()
 		})
 
 		dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-			select {
-			case inputMessages <- msg.Data:
-			case <-ctx.Done():
+			if _, err := gameConn.Write(msg.Data); err != nil {
+				slog.Warn("game server write failed", "err", err)
 			}
 		})
 	})
