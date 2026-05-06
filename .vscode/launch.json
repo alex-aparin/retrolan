@@ -1,0 +1,64 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch server",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/server",
+            "output": "${workspaceFolder}/bin/server",
+            "cwd": "${workspaceFolder}/bin",
+            "env": {
+                "GAME_SERVER_ADDR" : ":27015",
+            }
+        },
+        {
+            "name": "Launch client",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/client",
+            "output": "${workspaceFolder}/bin/client",
+            "cwd": "${workspaceFolder}/bin",
+            "env": {
+                "GAME_SERVER_ADDR" : ":27016",
+            },
+        },
+        {
+            "name": "Launch mockgame",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/mockgame",
+            "output": "${workspaceFolder}/bin/mockgame",
+            "cwd": "${workspaceFolder}/bin",
+            "env": {
+                "MOCK_HTTP_ADDR": ":8080",
+                "MOCK_LISTEN_ADDR": ":27015",
+                "MOCK_TARGET_ADDR": "127.0.0.1:27016"
+            },
+        },
+        {
+            "name": "Launch Go Tests",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}/cmd/client",
+            "args": [],
+            "showLog": true,
+            "env": {},
+            "buildFlags": ""
+          },
+    ],
+
+    "compounds": [
+    {
+      "name": "Server + Client + Mock",
+      "configurations": ["Launch server", "Launch client", "Launch mockgame"]
+    }
+  ]
+}

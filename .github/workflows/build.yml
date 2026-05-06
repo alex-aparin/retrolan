@@ -1,0 +1,43 @@
+name: build
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build (${{ matrix.goos }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            goos: linux
+            ext: ""
+          - runner: windows-2022
+            goos: windows
+            ext: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build client
+        run: go build -o bin/client${{ matrix.ext }} ./cmd/client
+
+      - name: Build server
+        run: go build -o bin/server${{ matrix.ext }} ./cmd/server
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: retrolan-${{ matrix.goos }}
+          path: |
+            bin/client${{ matrix.ext }}
+            bin/server${{ matrix.ext }}
+          if-no-files-found: error

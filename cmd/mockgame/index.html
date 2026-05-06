@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>retrolan mockgame</title>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         margin: 1em; background: #111; color: #ddd; }
+  h1 { margin: 0 0 0.5em; font-size: 1.2em; }
+  .panel { border: 1px solid #333; padding: 0.75em 1em; margin-bottom: 1em; background: #181818; }
+  .panel h2 { margin: 0 0 0.25em; font-size: 1em; color: #fff; }
+  .panel .meta { color: #888; font-size: 0.85em; margin-bottom: 0.5em; }
+  .log { height: 280px; overflow-y: auto; background: #000;
+         padding: 0.5em; border: 1px solid #222; font-size: 0.9em; }
+  .row { padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
+  .row.rx { color: #6f6; }
+  .row.tx { color: #6cf; }
+  .row time { color: #888; margin-right: 0.5em; }
+  .controls { display: flex; gap: 0.5em; margin-top: 0.5em; align-items: center; }
+  input[type=text] { flex: 1; padding: 0.35em 0.5em; background: #000;
+                     color: #ddd; border: 1px solid #333; font-family: inherit; }
+  button { padding: 0.35em 0.9em; background: #222; color: #ddd;
+           border: 1px solid #444; cursor: pointer; font-family: inherit; }
+  button:hover { background: #2c2c2c; }
+  .status { font-size: 0.85em; color: #888; margin-left: 0.5em; }
+  .status.ok { color: #6f6; }
+  .status.bad { color: #f66; }
+</style>
+</head>
+<body>
+
+<h1>retrolan mockgame <span id="conn" class="status">connecting…</span></h1>
+
+<div class="panel">
+  <h2>Listener</h2>
+  <div class="meta">UDP <code>{{.ListenAddr}}</code> — every datagram is echoed back to its source.</div>
+  <div id="listen-log" class="log"></div>
+  <div class="controls">
+    <button id="listen-clear">Clear</button>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Sender</h2>
+  <div class="meta">UDP <code>{{.SenderLocal}}</code> → <code>{{.TargetAddr}}</code></div>
+  <div id="send-log" class="log"></div>
+  <form id="send-form" class="controls">
+    <input type="text" id="send-input" placeholder="payload to send (UTF-8)" autocomplete="off" />
+    <button type="submit">Send</button>
+    <button type="button" id="send-clear">Clear</button>
+    <span id="send-status" class="status"></span>
+  </form>
+</div>
+
+<script>
+  const listenLog = document.getElementById('listen-log');
+  const sendLog = document.getElementById('send-log');
+  const conn = document.getElementById('conn');
+  const sendInput = document.getElementById('send-input');
+
+  function randomPayload() {
+    const words = ['ping', 'hello', 'echo', 'probe', 'hi'];
+    const word = words[Math.floor(Math.random() * words.length)];
+    const id = Math.random().toString(36).slice(2, 6);
+    return `${word} ${id}`;
+  }
+  sendInput.value = randomPayload();
+
+  function fmtTime(ts) {
+    const d = new Date(ts);
+    const pad = (n, w = 2) => String(n).padStart(w, '0');
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' +
+           pad(d.getSeconds()) + '.' + pad(d.getMilliseconds(), 3);
+  }
+
+  function append(panel, ev) {
+    const row = document.createElement('div');
+    row.className = 'row ' + ev.direction;
+    const arrow = ev.direction === 'rx' ? '<<' : '>>';
+    row.textContent = fmtTime(ev.timestamp) + ' ' + arrow + ' ' +
+                      ev.peer + ' (' + ev.length + 'B) ' + ev.preview;
+    const stick = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 4;
+    panel.appendChild(row);
+    if (stick) panel.scrollTop = panel.scrollHeight;
+  }
+
+  document.getElementById('listen-clear').addEventListener('click', () => listenLog.replaceChildren());
+  document.getElementById('send-clear').addEventListener('click', () => sendLog.replaceChildren());
+
+  const es = new EventSource('/events');
+  es.onopen = () => { conn.textContent = 'live'; conn.className = 'status ok'; };
+  es.onerror = () => { conn.textContent = 'reconnecting…'; conn.className = 'status bad'; };
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.socket === 'listen') append(listenLog, ev);
+    else append(sendLog, ev);
+  };
+
+  const sendStatus = document.getElementById('send-status');
+  document.getElementById('send-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const payload = sendInput.value;
+    if (!payload) return;
+    sendStatus.textContent = '';
+    try {
+      const res = await fetch('/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload }),
+      });
+      if (!res.ok) {
+        sendStatus.textContent = 'send failed: ' + (await res.text()).trim();
+        sendStatus.className = 'status bad';
+        return;
+      }
+      sendInput.value = randomPayload();
+      sendInput.focus();
+      sendInput.select();
+    } catch (err) {
+      sendStatus.textContent = 'send failed: ' + err;
+      sendStatus.className = 'status bad';
+    }
+  });
+</script>
+
+</body>
+</html>
