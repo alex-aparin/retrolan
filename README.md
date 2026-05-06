@@ -1,8 +1,9 @@
-# retrolan
+# retrolan ![example workflow](https://github.com/alex-aparin/retrolan/actions/workflows/build.yml/badge.svg)
 
 Peer-to-peer LAN tunnel over WebRTC for older multiplayer games whose networking is built around local-network discovery and per-packet UDP (Counter-Strike 1.6, Quake-era titles, and similar). Each player runs the relay **client**, which appears locally as a LAN game server on UDP port `27015` and forwards the game's traffic over a WebRTC data channel to the relay **server**, which sits next to the actual game server and replays the traffic into it as if it came from a local LAN player.
 
 The project is an early-stage foundation — the WebRTC pipe and bidirectional UDP relay are in place; multi-client fan-out, NAT traversal beyond STUN, and a real signaling channel are deliberately deferred.
+
 
 ## Architecture
 
