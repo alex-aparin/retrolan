@@ -27,7 +27,6 @@
             "env": {
                 "GAME_SERVER_ADDR" : ":27016",
             },
-            "console": "integratedTerminal"
         },
         {
             "name": "Launch mockgame",
@@ -42,7 +41,6 @@
                 "MOCK_LISTEN_ADDR": ":27015",
                 "MOCK_TARGET_ADDR": "127.0.0.1:27016"
             },
-            "console": "integratedTerminal"
         },
         {
             "name": "Launch Go Tests",

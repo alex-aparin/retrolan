@@ -65,36 +65,32 @@ func runPeerConnection(ctx context.Context, cancel context.CancelFunc, inputMess
 		}
 	})
 
-	peerConnection.OnDataChannel(func(dataChannel *webrtc.DataChannel) {
-		slog.Info("new data channel", "label", dataChannel.Label(), "id", dataChannel.ID())
-
-		dataChannel.OnOpen(func() {
-			slog.Info("data channel open", "label", dataChannel.Label(), "id", dataChannel.ID())
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case buf := <-outputMessages:
-					if sendErr := dataChannel.Send(buf); sendErr != nil {
-						slog.Error("data channel send failed", "err", sendErr)
-						return
-					}
-				}
-			}
-		})
-
-		dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-			select {
-			case inputMessages <- msg.Data:
-			case <-ctx.Done():
-			}
-		})
-	})
-
-	_, err = peerConnection.CreateDataChannel("data", nil)
+	dataChannel, err := peerConnection.CreateDataChannel("data", nil)
 	if err != nil {
 		panic(err)
 	}
+
+	dataChannel.OnOpen(func() {
+		slog.Info("data channel open", "label", dataChannel.Label(), "id", dataChannel.ID())
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case buf := <-outputMessages:
+				if sendErr := dataChannel.Send(buf); sendErr != nil {
+					slog.Error("data channel send failed", "err", sendErr)
+					return
+				}
+			}
+		}
+	})
+
+	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
+		select {
+		case inputMessages <- msg.Data:
+		case <-ctx.Done():
+		}
+	})
 
 	offer, err := peerConnection.CreateOffer(nil)
 	if err != nil {

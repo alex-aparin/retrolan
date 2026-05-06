@@ -107,11 +107,12 @@ func runListener(ctx context.Context, addr string, h *hub) error {
 		payload := append([]byte(nil), buf[:n]...)
 		h.broadcast(newEvent("listen", "rx", src.String(), payload))
 
-		if _, err := conn.WriteToUDP(payload, src); err != nil {
+		reply := append(append([]byte(nil), payload...), " FROM SERVER"...)
+		if _, err := conn.WriteToUDP(reply, src); err != nil {
 			slog.Warn("listener echo failed", "dst", src.String(), "err", err)
 			continue
 		}
-		h.broadcast(newEvent("listen", "tx", src.String(), payload))
+		h.broadcast(newEvent("listen", "tx", src.String(), reply))
 	}
 }
 
